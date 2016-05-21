@@ -1,0 +1,31 @@
+{% set version = salt['pillar.get']('scaling-wordpress:wordpress:version', '4.5.2') %}
+{% set url = 'https://wordpress.org/wordpress-' + version + '.tar.gz' %}
+{% set md5 = salt['pillar.get']('scaling-wordpress:wordpress:md5') %}
+
+{% set AUTH_KEY        = salt['pillar.get']('scaling-wordpress:wordpress:AUTH_KEY', 'changeme') %}
+{% set SECURE_AUTH_KEY = salt['pillar.get']('scaling-wordpress:wordpress:SECURE_AUTH_KEY', 'changeme') %}
+{% set LOGGED_IN_KEY   = salt['pillar.get']('scaling-wordpress:wordpress:LOGGED_IN_KEY', 'changeme') %}
+{% set NONCE_KEY       = salt['pillar.get']('scaling-wordpress:wordpress:NONCE_KEY', 'changeme') %}
+{% set AUTH_SALT       = salt['pillar.get']('scaling-wordpress:wordpress:AUTH_SALT', 'changeme') %}
+{% set SECURE_AUTH_SALT= salt['pillar.get']('scaling-wordpress:wordpress:SECURE_AUTH_SALT', 'changeme') %}
+{% set LOGGED_IN_SALT  = salt['pillar.get']('scaling-wordpress:wordpress:LOGGED_IN_SALT', 'changeme') %}
+{% set NONCE_SALT      = salt['pillar.get']('scaling-wordpress:wordpress:NONCE_SALT', 'changeme') %}
+
+{% set haproxyip = salt['mine.get']('roles:scaling-wordpress-haproxy', 'external_ips', 'grain').values()[0][0] %}
+{% set haproxyurl = 'https://' + haproxyip %}
+{% set siteurl = salt['pillar.get']('scaling-wordpress:wordpress:site_url', haproxyurl) %}
+
+{% set wordpress = {
+    'version': version,
+    'url': url,
+    'md5': md5,
+    'siteurl': siteurl,
+    'AUTH_KEY': AUTH_KEY,
+    'SECURE_AUTH_KEY': SECURE_AUTH_KEY,
+    'LOGGED_IN_KEY': LOGGED_IN_KEY,
+    'NONCE_KEY': NONCE_KEY,
+    'AUTH_SALT': AUTH_SALT,
+    'SECURE_AUTH_SALT': SECURE_AUTH_SALT,
+    'LOGGED_IN_SALT': LOGGED_IN_SALT,
+    'NONCE_SALT': NONCE_SALT
+} %}

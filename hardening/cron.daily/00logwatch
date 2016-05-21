@@ -1,0 +1,8 @@
+#!/bin/bash
+
+#Check if removed-but-not-purged
+test -x /usr/share/logwatch/scripts/logwatch.pl || exit 0
+
+#execute
+/usr/sbin/logwatch --mailto {{salt['pillar.get']('logwatch:mailto')}}
+

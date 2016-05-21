@@ -1,0 +1,25 @@
+{% set bootstrap_ids = salt['mine.get']('roles:scaling-wordpress-galera', 'id', 'grain').values() %}
+{% do bootstrap_ids.sort() %}
+{% set bootstrap_id = bootstrap_ids[0] %}
+{% set is_bootstrap = False %}
+{% if salt['grains.get']('id') == bootstrap_id %}
+{% set is_bootstrap = True %}
+{% endif %}
+
+{% set cluster_started = salt['grains.get']('cluster_started') %}
+
+{% set db_name = salt['pillar.get']('scaling-wordpress:galera:db:name', 'wordpress') %}
+{% set db_username = salt['pillar.get']('scaling-wordpress:galera:db:username', 'wordpress') %}
+{% set db_password = salt['pillar.get']('scaling-wordpress:galera:db:password', 'changeme') %}
+
+{% set interface = salt['pillar.get']('interfaces:private', 'eth0') %}
+{% set db_host = salt['pillar.get']('scaling-wordpress:galera:db:host', salt['network.ipaddrs'](interface)[0]) %}
+
+{% set galera = {
+    'is_bootstrap': is_bootstrap,
+    'cluster_started': cluster_started,
+    'db_name': db_name,
+    'db_username': db_username,
+    'db_password': db_password,
+    'db_host': db_host
+} %}

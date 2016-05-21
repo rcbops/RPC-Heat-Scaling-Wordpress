@@ -1,0 +1,23 @@
+minion-4gb:
+  - james-wordpress-haproxy-1:
+      grains:
+        roles:
+          - scaling-wordpress-haproxy
+
+  - james-wordpress-node-1:
+      grains:
+        roles:
+          - scaling-wordpress-web
+          - scaling-wordpress-galera
+
+  - james-wordpress-node-2:
+      grains:
+        roles:
+          - scaling-wordpress-web
+          - scaling-wordpress-galera
+
+  - james-wordpress-node-3:
+      grains:
+        roles:
+          - scaling-wordpress-web
+          - scaling-wordpress-galera
