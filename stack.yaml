@@ -1,0 +1,706 @@
+heat_template_version: 2015-04-30
+
+description: |
+  Deploys a variable number of node wordpress/galera stack.
+  Deploys one haproxy node.
+  All web nodes are also galera nodes.
+  A floating ip will be assigned to the haproxy node.
+  The haproxy node will also run salt-master.
+
+parameter_groups:
+  - label: Sizing and location
+    description: What networks and how large of a vm.
+    parameters:
+      - keyname
+      - image
+      - flavor
+      - floating-network
+      - node-count
+
+  - label: Don't touch
+    description: These parameters should be left default except in special cases.
+    parameters:
+      - git-formula-repo
+
+parameters:
+
+  keyname:
+    type: string
+    label: SSH Keypair name.
+    description: Name of the ssh key used to ssh into mysql server.
+
+  image:
+    type: string
+    label: Image Name
+    description: Name of the trusty image that contains software config heat elements.
+
+  flavor:
+    type: string
+    label: Flavor
+    description: Flavor (size) for all virtual machines in this stack.
+    default: m1.small
+
+  floating-network:
+    type: string
+    label: External Network Name or UUID
+    description: The private network created by this stack will route to this network.
+    default: changeme
+
+  node-count:
+    type: number
+    default: 3
+    label: Number of Web/Galera Servers
+    description: Number of Web/Galera Servers. It is recommended to choose an ODD number of servers.
+    contraints:
+      - range:
+          min: 3
+          max: 7
+
+  git-formula-repo:
+    type: string
+    label: Scaling Wordpress Formula Repo
+    description: Formula git repository. This should remain as default except for development.
+    default: https://github.com/rcbops/RPC-Heat-Scaling-Wordpress.git
+
+resources:
+
+  galera-secret:
+    type: OS::Heat::RandomString
+    properties:
+      length: 32
+      sequence: lettersdigits
+
+  wordpress-secret:
+    type: OS::Heat::RandomString
+    properties:
+      length: 32
+      sequence: lettersdigits
+
+  wordpress-AUTH_KEY:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-SECURE_AUTH_KEY:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-LOGGED_IN_KEY:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-NONCE_KEY:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-AUTH_SALT:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-SECURE_AUTH_SALT:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-LOGGED_IN_SALT:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  wordpress-NONCE_SALT:
+    type: OS::Heat::RandomString
+    properties:
+      length: 86
+      sequence: lettersdigits
+
+  # Security group
+  secgroup:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name:
+        str_replace:
+          template: scaling-wordpress-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+      rules:
+        - protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+        - protocol: tcp
+          port_range_min: 3306
+          port_range_max: 3306
+        - protocol: tcp
+          port_range_min: 4505
+          port_range_max: 4506
+        - protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+        - protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+        - protocol: tcp
+          port_range_min: 4567
+          port_range_max: 4567
+        - protocol: udp
+          port_range_min: 4567
+          port_range_max: 4567
+        - protocol: tcp
+          port_range_min: 4568
+          port_range_max: 4568
+        - protocol: tcp
+          port_range_min: 4444
+          port_range_max: 4444
+        - protocol: tcp
+          port_range_min: 30865
+          port_range_max: 30865
+
+  # Keypair for communicating between nodes within the stack.
+  # Will allow minions to ssh into the master and vice versa.
+  coms:
+    type: OS::Nova::KeyPair
+    properties:
+      save_private_key: true
+      name:
+        str_replace:
+          template: scaling-wordpress--key-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+
+  # Private network for this stack
+  net:
+    type: OS::Neutron::Net
+    properties:
+      name:
+        str_replace:
+          template: scaling-wordpress-net-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+
+  # Private subnet for this stack
+  subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      name:
+        str_replace:
+          template: scaling-wordpress-subnet-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+      network_id:
+        get_resource: net
+      cidr: 10.20.20.0/24
+      dns_nameservers:
+        - 8.8.8.8
+        - 4.2.2.2
+
+  # Routes the private network to the external network.
+  router:
+    type: OS::Neutron::Router
+    properties:
+      name:
+        str_replace:
+          template: scaling-wordpress-router-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+      external_gateway_info:
+        network:
+          get_param: floating-network
+
+  # Router interface
+  interface:
+    type: OS::Neutron::RouterInterface
+    properties:
+      router_id:
+        get_resource: router
+      subnet_id:
+        get_resource: subnet
+
+  # One floating ip for the salt-master node
+  haproxy-ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network:
+        get_param: floating-network
+
+  # One port for the haproxy/salt-master node
+  haproxy-port:
+    type: OS::Neutron::Port
+    properties:
+      name:
+        str_replace:
+          template: scaling-wordpress-haproxy-port-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+      network_id:
+        get_resource: net
+      security_groups:
+        - get_resource: secgroup
+
+  # Software configuration script for the salt-master
+  config-salt-master:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      group: script
+      inputs:
+        - name: public_key
+        - name: git_formula_repo
+      config: |
+        #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-salt-master
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+
+        [ -e ${prefix}.ran ] && exit 0
+        chmod -R 0600 ${logdir}
+        chmod 0700 /root/.ssh/coms_rsa
+        chmod 0600 /srv/pillar/scaling_wordpress.sls
+
+        # Add coms from minions to master
+        echo "$public_key" >> /root/.ssh/authorized_keys
+
+        # Install salt-master and git
+        echo "Install Salt Master"
+        add-apt-repository -y ppa:saltstack/salt2015-5
+        apt-get update
+        apt-get install -y git salt-master
+
+        mkdir -p /srv/salt
+        echo -e 'file_roots:\n  base:\n    - /srv/salt' >> /etc/salt/master
+
+        git clone "${git_formula_repo}" /srv/salt/scaling_wordpress
+
+        # Finally - Restart salt service
+        service salt-master restart
+
+  # Software configuration for the salt minion.
+  # Installs salt minion and connects minion to master.
+  config-salt-minion:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      group: script
+      inputs:
+        - name: public_key
+        - name: master
+      config: |
+        #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-salt-minion
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+        [ -e ${prefix}.ran ] && exit 0
+
+        chmod -R 0600 ${logdir}
+        chmod 0700 /root/.ssh/coms_rsa
+
+        # Add coms from minions to master
+        echo "$public_key" >> /root/.ssh/authorized_keys
+
+        # Install salt minion
+        add-apt-repository -y ppa:saltstack/salt2015-5
+        apt-get update
+        apt-get install -y git salt-minion
+
+        echo master: $master >> /etc/salt/minion
+        service salt-minion restart
+
+        ssh-keyscan -H $master >> /root/.ssh/known_hosts
+
+        MASTER_PKI_PATH="/etc/salt/pki/master/minions/"
+        MASTER_PKI_PATH_PRE="/etc/salt/pki/master/minions_pre/"
+        MINION_PKI_PATH="/etc/salt/pki/minion/minion.pub"
+        HOSTNAME="$(python  -c 'import socket; print socket.getfqdn()')"
+
+        while [ ! -s ${MINION_PKI_PATH} ]; do
+            echo "Waiting for ${MINION_PKI_PATH} to have non-zero content."
+            sleep 2
+        done
+
+        cp $MINION_PKI_PATH /root/minion_key
+        scp -i /root/.ssh/coms_rsa /root/minion_key root@$master:/tmp/$HOSTNAME
+        ssh -i /root/.ssh/coms_rsa root@$master "mv /tmp/$HOSTNAME $MASTER_PKI_PATH$HOSTNAME; chmod 700 $MASTER_PKI_PATH$HOSTNAME"
+        rm /root/minion_key
+        if [ ! -f /etc/salt/master ]; then
+            rm /root/.ssh/coms_rsa
+        fi
+        service salt-minion restart
+        touch ${prefix}.ran
+
+  # Software deployment for salt-master. Deploys the salt-master software
+  # configuration.
+  deploy-salt-master:
+    type: OS::Heat::SoftwareDeployment
+    properties:
+      input_values:
+        master:
+          get_attr:
+             - haproxy
+             - first_address
+        git_formula_repo:
+          get_param: git-formula-repo
+      config:
+        get_resource: config-salt-master
+      server:
+        get_resource: haproxy
+
+  # The salt master instance
+  # Should have one floating ip
+  haproxy:
+    type: OS::Nova::Server
+    properties:
+      key_name:
+        get_param: keyname
+      image:
+        get_param: image
+      flavor:
+        get_param: flavor
+      name:
+        str_replace:
+          template: scaling-wordpress-haproxy-$stack_name$
+          params:
+            $stack_name$:
+              get_param: OS::stack_name
+
+      personality:
+        # Private key for ssh'ing into minions
+        /root/.ssh/coms_rsa:
+          get_attr:
+            - coms
+            - private_key
+
+        # The top.sls file for salt pillars.
+        # Dictates which minions get which pillars
+        /srv/pillar/top.sls: |
+          base:
+            'roles:scaling-wordpress-haproxy':
+              - match: grain
+              - scaling_wordpress
+            'roles:scaling-wordpress-web':
+              - match: grain
+              - scaling_wordpress
+            'roles:scaling-wordpress-galera':
+              - match: grain
+              - scaling_wordpress
+
+        # The top.sls file for salt states.
+        # Dictates which minions get which states.
+        /srv/salt/top.sls: |
+          base:
+            'roles:scaling-wordpress-web':
+              - match: grain
+              - scaling_wordpress.galera
+              - scaling_wordpress.web
+              - scaling_wordpress.sync
+            'roles:scaling-wordpress-haproxy':
+              - match: grain
+              - scaling_wordpress.haproxy
+
+        # Set the salt grain for roles
+        /etc/salt/grains: |
+          roles:
+            - scaling-wordpress-haproxy
+
+        # The app pillar. Describe interfaces and salt-mine functions.
+        /srv/pillar/scaling_wordpress.sls:
+          str_replace:
+            params:
+              $galera_secret$:
+                get_attr:
+                  - galera-secret
+                  - value
+              $wordpress_secret$:
+                get_attr:
+                  - wordpress-secret
+                  - value
+              $AUTH_KEY$:
+                get_attr:
+                  - wordpress-AUTH_KEY
+                  - value
+              $SECURE_AUTH_KEY$:
+                get_attr:
+                  - wordpress-SECURE_AUTH_KEY
+                  - value
+              $LOGGED_IN_KEY$:
+                get_attr:
+                  - wordpress-LOGGED_IN_KEY
+                  - value
+              $NONCE_KEY$:
+                get_attr:
+                  - wordpress-NONCE_KEY
+                  - value
+              $AUTH_SALT$:
+                get_attr:
+                  - wordpress-AUTH_SALT
+                  - value
+              $SECURE_AUTH_SAlT$:
+                get_attr:
+                  - wordpress-SECURE_AUTH_SALT
+                  - value
+              $SECURE_AUTH_SAlT$:
+                get_attr:
+                  - wordpress-SECURE_AUTH_SALT
+                  - value
+              $LOGGED_IN_SALT$:
+                get_attr:
+                  - wordpress-LOGGED_IN_SALT
+                  - value
+              $NONCE_SALT$:
+                get_attr:
+                  - wordpress-NONCE_SALT
+                  - value
+            template: |
+              scaling-wordpress:
+                galera:
+                  root_password: '$galera_secret$'
+                  db:
+                    name: wordpress
+                    username: wordpress
+                    password: '$wordpress_secret$'
+
+                mdb_repo:
+                  baseurl: http://mirror.jmu.edu/pub/mariadb/repo/10.0/ubuntu
+                  keyserver: hkp://keyserver.ubuntu.com:80
+                  keyid: '0xcbcb082a1bb943db'
+                  file: /etc/apt/sources.list
+
+                wordpress:
+                  version: 4.5.2
+                  md5: 056da124260ed5b4465ec1fb2f9b7155
+                  AUTH_KEY: '$AUTH_KEY%'
+                  SECURE_AUTH_KEY: '$SECURE_AUTH_KEY$'
+                  LOGGED_IN_KEY: '$LOGGED_IN_KEY$'
+                  NONCE_KEY: '$NONCE_KEY$'
+                  AUTH_SALT: '$AUTH_SALT$'
+                  SECURE_AUTH_SALT: '$SECURE_AUTH_SALT$'
+                  LOGGED_IN_SALT: '$LOGGED_IN_SALT$'
+                  NONCE_SALT: '$NONCE_SALT'
+
+                sync:
+                  group: wordpress
+                  target: roles:scaling-wordpress-web
+                  expr_type: grain
+                  includes:
+                    - /var/www
+                  excludes:
+                    - /var/www/wordpress/wp-config.php
+
+              interfaces:
+                public: eth0
+                private: eth0
+
+              mine_functions:
+                internal_ips:
+                  mine_function: network.ipaddrs
+                  interface: eth0
+                external_ips:
+                  mine_function: network.ipaddrs
+                  interface: eth0
+
+              user-ports:
+                ssh:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 22
+                salt-master:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 4505
+                salt-minion:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 4506
+                mysql:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 3306
+                galera_traffic_tcp:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 4567
+                galera_traffic_udp:
+                  chain: INPUT
+                  proto: udp
+                  dport: 4567
+                galera_ist:
+                  chain: INPUT
+                  proto: TCP
+                  dport: 4568
+                galera_sst:
+                  chain: INPUT
+                  proto: TCP
+                  dport: 4444
+                http:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 80
+                https:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 443
+                lsyncd:
+                  chain: INPUT
+                  proto: tcp
+                  dport: 30865
+
+      # Get access from the master-port
+      networks:
+        - port:
+            get_resource: haproxy-port
+
+      # Using SoftwareConfigs - This needs to be set to SOFTWARE_CONFIG
+      user_data_format: SOFTWARE_CONFIG
+
+  haproxy-floating-ip-ass:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id:
+        get_resource: haproxy-ip
+      port_id:
+        get_resource: haproxy-port
+
+  # Deploys the salt-minion software config to the haproxy node.
+  deploy-salt-minion-haproxy:
+    type: OS::Heat::SoftwareDeployment
+    depends_on: deploy-salt-master
+    properties:
+      input_values:
+        public_key:
+          get_attr:
+            - coms
+            - public_key
+        master:
+          get_attr:
+            - haproxy
+            - first_address
+      config:
+        get_resource: config-salt-minion
+      server:
+        get_resource: haproxy
+
+  web-servers:
+    type: OS::Heat::ResourceGroup
+    depends_on: deploy-salt-master
+    properties:
+      count:
+        get_param: web-count
+      resource_def:
+        type: Salt::WebMinion
+        properties:
+          flavor:
+            get_param: flavor
+          stack-prefix:
+            str_replace:
+              template: scaling-wordpress-$stack_name$
+              params:
+                $stack_name$:
+                  get_param: OS::stack_name
+          private_key:
+            get_attr:
+              - coms
+              - private_key
+          public_key:
+            get_attr:
+              - coms
+              - public_key
+          image:
+            get_param: image
+          network:
+            get_resource: net
+          master:
+            get_attr:
+              - haproxy
+              - first_address
+          minion-config:
+            get_resource: config-salt-minion
+          minion-roles: "scaling-wordpress-web, scaling-wordpress-galera"
+          security-group:
+            get_resource: secgroup
+
+  config-deploy:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      group: script
+      config: |
+        #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-deploy
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+        [ -e ${prefix}.ran ] && exit 0
+        cd /srv/salt/scaling_wordpress/sync/files/csync2/
+        bash generate_key.sh
+        salt-run state.orchestrate scaling_wordpress.runner
+        salt '*' test.ping
+        touch ${prefix}.ran
+
+  deploy:
+    type: OS::Heat::SoftwareDeployment
+    properties:
+      config:
+        get_resource: config-deploy
+      server:
+        get_resource: haproxy
+    depends_on:
+      - deploy-salt-master
+      - deploy-salt-minion-haproxy
+      - web-servers
+
+outputs:
+  haproxy-ip:
+    description: The ip address of the haproxy/salt-master server.
+    value:
+      get_attr:
+        - haproxy-ip
+        - floating_ip_address
+
+  mysql-port:
+    description: The MySQL port.
+    value: 3306
+
+  web_server_ips:
+    description: ip addresses of the web servers.
+    value:
+      get_attr:
+        - web-servers
+        - minion-ip
+
+  url:
+    description: Url of the scaling wordpress stack.
+    value:
+      str_replace:
+        template: https://$haproxy-ip$
+        params:
+          $haproxy-ip$:
+            get_attr:
+              - haproxy-ip
+              - floating_ip_address
+
+  ssh_access:
+    description: How to ssh into the stack.
+    value:
+      str_replace:
+        template: ssh ubuntu@$haproxy-ip$
+        params:
+          $haproxy-ip$:
+            get_attr:
+              - haproxy-ip
+              - floating_ip_address
