@@ -51,7 +51,7 @@ parameters:
     default: 3
     label: Number of Web/Galera Servers
     description: Number of Web/Galera Servers. It is recommended to choose an ODD number of servers.
-    contraints:
+    constraints:
       - range:
           min: 3
           max: 7
@@ -280,7 +280,7 @@ resources:
         echo "Install Salt Master"
         add-apt-repository -y ppa:saltstack/salt2015-5
         apt-get update
-        apt-get install -y git salt-master
+        apt-get install -y --force-yes git salt-master
 
         mkdir -p /srv/salt
         echo -e 'file_roots:\n  base:\n    - /srv/salt' >> /etc/salt/master
@@ -317,7 +317,7 @@ resources:
         # Install salt minion
         add-apt-repository -y ppa:saltstack/salt2015-5
         apt-get update
-        apt-get install -y git salt-minion
+        apt-get install -y --force-yes git salt-minion
 
         echo master: $master >> /etc/salt/minion
         service salt-minion restart
@@ -422,6 +422,10 @@ resources:
         /srv/pillar/scaling_wordpress.sls:
           str_replace:
             params:
+              $haproxy-ip$:
+                get_attr:
+                  - haproxy-ip
+                  - floating_ip_address
               $galera_secret$:
                 get_attr:
                   - galera-secret
@@ -482,6 +486,7 @@ resources:
                   file: /etc/apt/sources.list
 
                 wordpress:
+                  site_url: https://$haproxy-ip$
                   version: 4.5.2
                   md5: 056da124260ed5b4465ec1fb2f9b7155
                   AUTH_KEY: '$AUTH_KEY%'
@@ -513,6 +518,12 @@ resources:
                 external_ips:
                   mine_function: network.ipaddrs
                   interface: eth0
+                id:
+                  - mine_function: grains.get
+                  - id
+                host:
+                  - mine_function: grains.get
+                  - host
 
               user-ports:
                 ssh:
@@ -600,7 +611,7 @@ resources:
     depends_on: deploy-salt-master
     properties:
       count:
-        get_param: web-count
+        get_param: node-count
       resource_def:
         type: Salt::WebMinion
         properties:
@@ -608,7 +619,7 @@ resources:
             get_param: flavor
           stack-prefix:
             str_replace:
-              template: scaling-wordpress-$stack_name$
+              template: scaling-wordpress-web-$stack_name$
               params:
                 $stack_name$:
                   get_param: OS::stack_name
@@ -650,6 +661,10 @@ resources:
         bash generate_key.sh
         salt-run state.orchestrate scaling_wordpress.runner
         salt '*' test.ping
+        salt '*' cmd.run "ps aux | grep mysql"
+        salt '*' cmd.run "ps aux | grep apache"
+
+
         touch ${prefix}.ran
 
   deploy:
