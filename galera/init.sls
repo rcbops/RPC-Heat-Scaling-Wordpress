@@ -1,5 +1,8 @@
 {% from "scaling_wordpress/galera/galera.jinja2" import galera with context %}
-
+debconf-utils:
+  pkg.installed:
+    - require_in:
+      - debconf: mariadb-preseed
 
 mariadb-preseed:
   debconf.set_file:

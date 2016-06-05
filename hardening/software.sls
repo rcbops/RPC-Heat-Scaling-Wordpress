@@ -1,3 +1,8 @@
+debconf-utils:
+  pkg.installed:
+    - require_in:
+      - debconf: postfix-preseed
+
 postfix-preseed:
   debconf.set_file:
     - source: salt://scaling_wordpress/hardening/files/postfix.preseed.jinja2
