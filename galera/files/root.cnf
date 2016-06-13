@@ -1,0 +1,5 @@
+{%- set password = salt['pillar.get']('scaling-wordpress:galera:root_password', 'changeme') -%}
+### Managed by Salt ###
+[client]
+user=root
+password={{ password }}

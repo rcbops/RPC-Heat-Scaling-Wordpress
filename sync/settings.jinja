@@ -1,0 +1,21 @@
+# Need to know how to choose which minions to pull from the salt mine.
+{% set target = salt['pillar.get']('scaling-wordpress:sync:target', 'roles:web') %}
+{% set expr_type = salt['pillar.get']('scaling-wordpress:sync:expr_type', 'grain') %}
+
+# Need to get ips keyed by minion-id as well as hostames keyed by
+# minion-id
+{% set original_hosts = salt['mine.get'](target, 'internal_ips', expr_type) %}
+{% set hostnames = salt['mine.get'](target, 'host', expr_type) %}
+
+# State sls files should import this
+{% set sync = {
+    'xinetd_path': '/etc/xinetd.d',
+    'csync2_path': '/etc/csync2',
+    'hosts': original_hosts,
+    'hostnames': hostnames,
+    'includes': salt['pillar.get']('scaling-wordpress:sync:includes', []),
+    'excludes': salt['pillar.get']('scaling-wordpress:sync:excludes', []),
+    'group': salt['pillar.get']('scaling-wordpress:sync:group', 'default'),
+    'conflict': salt['pillar.get']('scaling-wordpress:sync:conflict', 'none')
+} %}
+
